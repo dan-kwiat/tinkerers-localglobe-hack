@@ -16,7 +16,7 @@ export default function Page() {
   const [commuteFrom, setCommuteFrom] = useState("")
   const [commuteTo, setCommuteTo] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<any>(null)
+  const [result, setResult] = useState<unknown>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -37,7 +37,7 @@ export default function Page() {
         try {
           const text = await response.text()
           throw new Error(text)
-        } catch (err) {
+        } catch {
           throw new Error("Failed to generate a link")
         }
       }
@@ -98,22 +98,22 @@ export default function Page() {
             {isLoading ? "Generating..." : "Generate unique link"}
           </Button>
           {error && <p className="w-full text-sm text-red-600">{error}</p>}
-          {result && (
+          {result && typeof result === 'object' && result !== null && 'commuteFrom' in result && 'commuteTo' in result ? (
             <div className="mt-4 w-full text-sm space-y-2">
               <p>Your unique link is:</p>
               <p>
                 <a
                   className="underline font-bold"
-                  href={`${process.env.NEXT_PUBLIC_BASE_URL}/c/${result.commuteFrom.geohash}-${result.commuteTo.geohash}`}
+                  href={`${process.env.NEXT_PUBLIC_BASE_URL}/c/${(result as Record<string, { geohash: string }>).commuteFrom.geohash}-${(result as Record<string, { geohash: string }>).commuteTo.geohash}`}
                 >
-                  {`${process.env.NEXT_PUBLIC_BASE_URL}/c/${result.commuteFrom.geohash}-${result.commuteTo.geohash}`}
+                  {`${process.env.NEXT_PUBLIC_BASE_URL}/c/${(result as Record<string, { geohash: string }>).commuteFrom.geohash}-${(result as Record<string, { geohash: string }>).commuteTo.geohash}`}
                 </a>
               </p>
               <p>
                 Share this with someone you want to have a morning meeting with.
               </p>
             </div>
-          )}
+          ) : null}
         </CardFooter>
       </Card>
     </div>

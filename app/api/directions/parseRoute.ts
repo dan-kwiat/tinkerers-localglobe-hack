@@ -1,17 +1,3 @@
-interface TransitStop {
-  name: string
-  location: {
-    latitude: number
-    longitude: number
-  }
-}
-
-interface TransitLine {
-  name: string
-  nameShort: string
-  color: string
-  vehicleType: string
-}
 
 interface TransitStep {
   name: string
@@ -25,27 +11,46 @@ interface TransitStep {
   }
 }
 
-export function parseTransitRoute(jsonData: any): TransitStep[] {
+export function parseTransitRoute(jsonData: unknown): TransitStep[] {
   const steps: TransitStep[] = []
 
+  // Type guard for jsonData
+  if (!jsonData || typeof jsonData !== 'object' || !('routes' in jsonData)) {
+    return steps
+  }
+
+  const data = jsonData as { routes: unknown[] }
+  if (!Array.isArray(data.routes) || data.routes.length === 0) {
+    return steps
+  }
+
   // Get the first route only
-  const firstRoute = jsonData.routes[0]
-  if (!firstRoute || !firstRoute.legs) {
+  const firstRoute = data.routes[0]
+  if (!firstRoute || typeof firstRoute !== 'object' || !('legs' in firstRoute)) {
+    return steps
+  }
+
+  const route = firstRoute as { legs: unknown[] }
+  if (!Array.isArray(route.legs)) {
     return steps
   }
 
   // Process each leg of the first route
-  for (const leg of firstRoute.legs) {
-    if (!leg.steps) continue
+  for (const leg of route.legs) {
+    if (!leg || typeof leg !== 'object' || !('steps' in leg)) continue
+    
+    const legObj = leg as { steps: unknown[] }
+    if (!Array.isArray(legObj.steps)) continue
 
     // Filter out empty steps and process each step
-    const nonEmptySteps = leg.steps.filter(
-      (step: any) => step && Object.keys(step).length > 0
+    const nonEmptySteps = legObj.steps.filter(
+      (step: unknown) => step && typeof step === 'object' && step !== null && Object.keys(step).length > 0
     )
 
     for (const step of nonEmptySteps) {
-      if (step.transitDetails) {
-        const { transitDetails } = step
+      if (typeof step === 'object' && step !== null && 'transitDetails' in step) {
+        const stepObj = step as { transitDetails: unknown }
+        const { transitDetails } = stepObj
         const { stopDetails, transitLine } = transitDetails
 
         // Process departure stop
@@ -99,7 +104,7 @@ export function parseTransitRoute(jsonData: any): TransitStep[] {
 
 function determineStationTypes(
   stationName: string,
-  transitLine?: any
+  transitLine?: unknown
 ): string[] {
   const types: string[] = []
 
@@ -128,17 +133,30 @@ function determineStationTypes(
   if (
     stationName.includes("Stop") ||
     stationName.includes("(Stop") ||
-    (!stationName.includes("Station") && transitLine?.vehicle?.type === "BUS")
+    (!stationName.includes("Station") && 
+     typeof transitLine === 'object' && 
+     transitLine !== null && 
+     'vehicle' in transitLine && 
+     typeof (transitLine as Record<string, unknown>).vehicle === 'object' && 
+     (transitLine as Record<string, unknown>).vehicle !== null && 
+     'type' in (transitLine as Record<string, unknown>).vehicle && 
+     ((transitLine as Record<string, unknown>).vehicle as Record<string, unknown>).type === "BUS")
   ) {
     types.push("Bus Stop")
   }
 
   // If no specific type found, try to infer from transit line
-  if (types.length === 0 && transitLine) {
-    if (transitLine.vehicle?.type === "BUS") {
-      types.push("Bus Stop")
-    } else if (transitLine.vehicle?.type === "SUBWAY") {
-      types.push("Tube Station")
+  if (types.length === 0 && 
+      typeof transitLine === 'object' && 
+      transitLine !== null && 
+      'vehicle' in transitLine) {
+    const vehicle = (transitLine as Record<string, unknown>).vehicle
+    if (typeof vehicle === 'object' && vehicle !== null && 'type' in vehicle) {
+      if (vehicle.type === "BUS") {
+        types.push("Bus Stop")
+      } else if (vehicle.type === "SUBWAY") {
+        types.push("Tube Station")
+      }
     }
   }
 
@@ -150,18 +168,20 @@ function determineStationTypes(
   return types
 }
 
-function extractLines(transitLine: any): string[] {
+function extractLines(transitLine: unknown): string[] {
   const lines: string[] = []
 
-  if (transitLine) {
+  if (typeof transitLine === 'object' && transitLine !== null) {
+    const line = transitLine as Record<string, unknown>
+    
     // Add the main line name
-    if (transitLine.name) {
-      lines.push(transitLine.name)
+    if (typeof line.name === 'string') {
+      lines.push(line.name)
     }
 
     // Add short name if different and exists
-    if (transitLine.nameShort && transitLine.nameShort !== transitLine.name) {
-      lines.push(transitLine.nameShort)
+    if (typeof line.nameShort === 'string' && line.nameShort !== line.name) {
+      lines.push(line.nameShort)
     }
   }
 
