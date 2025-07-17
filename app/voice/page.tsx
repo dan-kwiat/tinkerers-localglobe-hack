@@ -2,8 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 
-const AGENT_ID = process.env.NEXT_PUBLIC_AGENT_ID || "agent_01k0cs3j51eqztentn2955bfm2";
-const ELEVENLABS_API_KEY = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY || "sk_58c624946dc2c2717fcc28b1232d732893c91308661f4706";
+const AGENT_ID = process.env.NEXT_PUBLIC_AGENT_ID || "";
+const ELEVENLABS_API_KEY = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY || "";
 
 export default function VoiceChat() {
   const [isConnected, setIsConnected] = useState(false);
