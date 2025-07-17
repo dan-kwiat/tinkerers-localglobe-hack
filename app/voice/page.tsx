@@ -2,22 +2,21 @@
 
 import { useState, useRef, useEffect } from 'react';
 
-import dotenv from 'dotenv';
-dotenv.config();
-
 const AGENT_ID = process.env.NEXT_PUBLIC_AGENT_ID || "";
 const ELEVENLABS_API_KEY = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY || "";
 
 export default function VoiceChat() {
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [status, setStatus] = useState('Ready to start conversation');
+  const [status, setStatus] = useState('incoming');
+  const [currentMessage, setCurrentMessage] = useState('');
   const [locationInfo, setLocationInfo] = useState({ protocol: 'unknown', host: 'unknown' });
   
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
 
   // Get location info on client side only
   useEffect(() => {
@@ -30,8 +29,8 @@ export default function VoiceChat() {
   }, []);
 
   // Check if browser supports required APIs
-  const checkBrowserSupport = () => {
-    const issues = [];
+  const checkBrowserSupport = (): string[] => {
+    const issues: string[] = [];
     
     if (!navigator.mediaDevices) {
       issues.push('MediaDevices API not supported');
@@ -52,8 +51,25 @@ export default function VoiceChat() {
     return issues;
   };
 
+  // Convert Float32Array to PCM16 base64
+  const float32ToPCM16Base64 = (float32Array: Float32Array): string => {
+    const pcm16Array = new Int16Array(float32Array.length);
+    for (let i = 0; i < float32Array.length; i++) {
+      // Convert float32 (-1.0 to 1.0) to int16 (-32768 to 32767)
+      pcm16Array[i] = Math.max(-32768, Math.min(32767, float32Array[i] * 32768));
+    }
+    
+    // Convert Int16Array to base64
+    const uint8Array = new Uint8Array(pcm16Array.buffer);
+    let binary = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+      binary += String.fromCharCode(uint8Array[i]);
+    }
+    return btoa(binary);
+  };
+
   // Start the voice conversation
-  const startConversation = async () => {
+  const acceptCall = async () => {
     try {
       console.log('=== STARTING CONVERSATION ===');
       console.log('Agent ID:', AGENT_ID);
@@ -77,7 +93,7 @@ export default function VoiceChat() {
         throw new Error('HTTPS required for microphone access');
       }
 
-      setStatus('Getting microphone access...');
+      setStatus('connecting');
       
       // Get microphone access with error handling
       let stream: MediaStream;
@@ -108,7 +124,6 @@ export default function VoiceChat() {
       }
       
       streamRef.current = stream;
-      setStatus('Connecting to ElevenLabs...');
 
       // Connect directly to ElevenLabs WebSocket with agent_id
       const wsUrl = `wss://api.elevenlabs.io/v1/convai/conversation?agent_id=${AGENT_ID}`;
@@ -120,7 +135,7 @@ export default function VoiceChat() {
       ws.onopen = () => {
         console.log('WebSocket connected successfully');
         setIsConnected(true);
-        setStatus('Connected! Start speaking...');
+        setStatus('connected');
         
         // Send initial conversation setup
         console.log('Sending conversation initiation...');
@@ -133,71 +148,56 @@ export default function VoiceChat() {
           }
         }));
         
-        // Check MediaRecorder support
-        const mimeTypes = [
-          'audio/webm;codecs=opus',
-          'audio/webm',
-          'audio/mp4',
-          'audio/wav'
-        ];
-        
-        let supportedMimeType = '';
-        for (const mimeType of mimeTypes) {
-          if (MediaRecorder.isTypeSupported(mimeType)) {
-            supportedMimeType = mimeType;
-            console.log('Found supported MIME type:', mimeType);
-            break;
+        // Set up Web Audio API for real-time PCM audio processing
+        try {
+          if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
           }
-        }
-        
-        if (!supportedMimeType) {
-          console.error('=== NO SUPPORTED AUDIO FORMAT ===');
-          console.error('Tested MIME types:', mimeTypes);
-          console.error('Available types:', mimeTypes.map(type => ({
-            type,
-            supported: MediaRecorder.isTypeSupported(type)
-          })));
-          console.error('================================');
-          throw new Error('No supported audio format found');
-        }
-        
-        console.log('Using MIME type:', supportedMimeType);
-        
-        // Set up MediaRecorder for audio capture
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: supportedMimeType
-        });
-        mediaRecorderRef.current = mediaRecorder;
 
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-            console.log('Converting audio chunk to base64:', event.data.size, 'bytes');
-            
-            // Convert blob to base64 for WebSocket transmission
-            const reader = new FileReader();
-            reader.onload = () => {
-              const base64 = (reader.result as string).split(',')[1]; // Remove data:audio/... prefix
-              console.log('Sending base64 audio chunk:', base64.length, 'chars');
+          const audioContext = audioContextRef.current;
+          
+          // Resume audio context if suspended
+          if (audioContext.state === 'suspended') {
+            audioContext.resume();
+          }
+
+          // Create audio source from microphone stream
+          const source = audioContext.createMediaStreamSource(stream);
+          
+          // Create script processor for real-time audio processing
+          // Note: ScriptProcessorNode is deprecated but still widely supported
+          // We'll use a small buffer size for low latency
+          const processor = audioContext.createScriptProcessor(4096, 1, 1);
+          processorRef.current = processor;
+
+          processor.onaudioprocess = (event) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              const inputBuffer = event.inputBuffer;
+              const inputData = inputBuffer.getChannelData(0);
+              
+              // Convert float32 audio to PCM16 base64
+              const base64Audio = float32ToPCM16Base64(inputData);
+              
+              console.log('Sending PCM audio chunk:', base64Audio.length, 'chars');
               ws.send(JSON.stringify({
-                user_audio_chunk: base64
+                user_audio_chunk: base64Audio
               }));
-            };
-            reader.readAsDataURL(event.data);
-          }
-        };
+            }
+          };
 
-        mediaRecorder.onerror = (event) => {
-          console.error('=== MEDIA RECORDER ERROR ===');
-          console.error('Error event:', event);
-          console.error('MediaRecorder state:', mediaRecorder.state);
+          // Connect the audio processing chain
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+          
+          setIsRecording(true);
+          console.log('Real-time PCM audio processing started');
+          
+        } catch (audioError) {
+          console.error('=== AUDIO CONTEXT ERROR ===');
+          console.error('Audio setup error:', audioError);
           console.error('===========================');
-          setStatus('Recording error - check console');
-        };
-
-        // Start recording immediately
-        mediaRecorder.start(100); // Send chunks every 100ms
-        setIsRecording(true);
-        console.log('Recording started');
+          throw new Error('Failed to set up audio processing');
+        }
       };
 
       ws.onmessage = async (event) => {
@@ -225,8 +225,10 @@ export default function VoiceChat() {
             console.log('Conversation initiated:', data.conversation_initiation_metadata_event);
           } else if (data.type === 'user_transcript') {
             console.log('User transcript:', data.user_transcription_event?.user_transcript);
+            setCurrentMessage(data.user_transcription_event?.user_transcript || '');
           } else if (data.type === 'agent_response') {
             console.log('Agent response:', data.agent_response_event?.agent_response);
+            setCurrentMessage(data.agent_response_event?.agent_response || '');
           } else if (data.type === 'audio') {
             console.log('Audio event received');
             if (data.audio_event?.audio_base_64) {
@@ -236,7 +238,7 @@ export default function VoiceChat() {
               for (let i = 0; i < audioData.length; i++) {
                 audioArray[i] = audioData.charCodeAt(i);
               }
-              const audioBlob = new Blob([audioArray], { type: 'audio/wav' });
+              const audioBlob = new Blob([audioArray], { type: 'audio/pcm' });
               await handleAudioResponse(audioBlob);
             }
           } else if (data.type === 'ping') {
@@ -262,7 +264,6 @@ export default function VoiceChat() {
       // Handle audio response function for PCM audio
       const handleAudioResponse = async (audioBlob: Blob) => {
         try {
-          setStatus('Playing response...');
           console.log('Playing PCM audio response...');
           
           if (!audioContextRef.current) {
@@ -311,7 +312,6 @@ export default function VoiceChat() {
           
           source.onended = () => {
             console.log('Audio playback completed');
-            setStatus('Listening...');
           };
           
           console.log('PCM audio playing via Web Audio API');
@@ -322,7 +322,6 @@ export default function VoiceChat() {
           console.error('Error type:', error?.constructor?.name);
           console.error('Error message:', error instanceof Error ? error.message : 'Unknown error');
           console.error('=============================');
-          setStatus('PCM audio error - check console');
         }
       };
 
@@ -332,7 +331,7 @@ export default function VoiceChat() {
         console.error('WebSocket URL:', wsUrl);
         console.error('WebSocket readyState:', ws.readyState);
         console.error('======================');
-        setStatus('WebSocket error - check console');
+        setStatus('error');
       };
 
       ws.onclose = (event) => {
@@ -344,7 +343,7 @@ export default function VoiceChat() {
         
         setIsConnected(false);
         setIsRecording(false);
-        setStatus('Connection closed');
+        setStatus('ended');
         
         if (event.code !== 1000) { // Normal closure
           console.error('=== UNEXPECTED WEBSOCKET CLOSURE ===');
@@ -352,7 +351,7 @@ export default function VoiceChat() {
           console.error('Close reason:', event.reason);
           console.error('Was clean:', event.wasClean);
           console.error('===================================');
-          setStatus(`Connection closed unexpectedly - check console`);
+          setStatus('error');
         }
       };
 
@@ -363,18 +362,23 @@ export default function VoiceChat() {
       console.error('Full error object:', error);
       console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace available');
       console.error('================================');
-      setStatus('Error starting conversation - check console');
+      setStatus('error');
     }
   };
 
-  // Stop the conversation
-  const stopConversation = () => {
+  // Decline call
+  const declineCall = () => {
+    setStatus('declined');
+  };
+
+  // End call
+  const endCall = () => {
     console.log('=== STOPPING CONVERSATION ===');
     
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      console.log('MediaRecorder stopped');
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+      console.log('Audio processor disconnected');
     }
 
     if (streamRef.current) {
@@ -394,101 +398,152 @@ export default function VoiceChat() {
     }
 
     setIsConnected(false);
-    setStatus('Stopped');
+    setIsRecording(false);
+    setStatus('ended');
     console.log('=============================');
   };
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopConversation();
+      endCall();
     };
   }, []);
 
+  const getStatusText = () => {
+    switch (status) {
+      case 'incoming': return 'Incoming call...';
+      case 'connecting': return 'Connecting...';
+      case 'connected': return 'Connected';
+      case 'ended': return 'Call ended';
+      case 'declined': return 'Call declined';
+      case 'error': return 'Call failed';
+      default: return 'Incoming call...';
+    }
+  };
+
+  const getCallDuration = () => {
+    if (status === 'connected' && isConnected) {
+      return '00:' + (Math.floor(Date.now() / 1000) % 60).toString().padStart(2, '0');
+    }
+    return '';
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 flex flex-col items-center justify-center p-4">
-      <div className="bg-white/10 backdrop-blur-lg rounded-3xl p-8 w-full max-w-md shadow-2xl">
-        <h1 className="text-3xl font-bold text-white text-center mb-8">
-          🎤 Voice Chat
-        </h1>
-        
-        <div className="space-y-6">
-          {/* Status Display */}
-          <div className="bg-black/20 rounded-lg p-4">
-            <p className="text-white/80 text-sm font-medium">Status:</p>
-            <p className="text-white text-lg">{status}</p>
+    <div className="min-h-screen bg-black flex flex-col items-center justify-center relative overflow-hidden">
+      {/* iPhone-style status bar */}
+      <div className="absolute top-0 left-0 right-0 h-12 flex items-center justify-between px-6 text-white text-sm font-medium z-10">
+        <div className="flex items-center space-x-1">
+          <div className="flex space-x-1">
+            <div className="w-1 h-1 bg-white rounded-full"></div>
+            <div className="w-1 h-1 bg-white rounded-full"></div>
+            <div className="w-1 h-1 bg-white rounded-full opacity-50"></div>
           </div>
-
-          {/* Console Notice */}
-          <div className="bg-yellow-500/20 border border-yellow-500/30 rounded-lg p-4">
-            <p className="text-yellow-200 text-sm font-medium">📋 Debug Info:</p>
-            <p className="text-yellow-100 text-sm">All errors and details are logged to the browser console. Open Developer Tools (F12) to view and copy error messages.</p>
-          </div>
-
-          {/* Debug Info */}
-          <div className="bg-black/20 rounded-lg p-3">
-            <p className="text-white/60 text-xs">
-              Protocol: {locationInfo.protocol}<br />
-              Host: {locationInfo.host}<br />
-              API Key: {ELEVENLABS_API_KEY ? '✓ Set' : '✗ Missing'}<br />
-              Agent ID: {AGENT_ID ? '✓ Set' : '✗ Missing'}
-            </p>
-          </div>
-
-          {/* Connection Indicator */}
-          <div className="flex items-center justify-center space-x-3">
-            <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`} />
-            <span className="text-white">
-              {isConnected ? 'Connected' : 'Disconnected'}
-            </span>
-          </div>
-
-          {/* Recording Indicator */}
-          {isRecording && (
-            <div className="flex items-center justify-center space-x-3">
-              <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-white">Recording...</span>
-            </div>
-          )}
-
-          {/* Control Buttons */}
-          <div className="space-y-4">
-            {!isConnected ? (
-              <button
-                onClick={startConversation}
-                className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-4 px-6 rounded-xl transition-all duration-200 transform hover:scale-105 active:scale-95"
-              >
-                🎙️ Start Voice Chat
-              </button>
-            ) : (
-              <button
-                onClick={stopConversation}
-                className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-4 px-6 rounded-xl transition-all duration-200 transform hover:scale-105 active:scale-95"
-              >
-                🛑 Stop Chat
-              </button>
-            )}
-          </div>
-
-          {/* Instructions */}
-          <div className="bg-black/20 rounded-lg p-4">
-            <p className="text-white/80 text-sm">
-              💡 <strong>Instructions:</strong><br />
-              1. Tap &quot;Start Voice Chat&quot;<br />
-              2. Allow microphone access<br />
-              3. Start speaking naturally<br />
-              4. The AI will respond through your phone speaker
-            </p>
-          </div>
-
-          {/* Mobile Optimization Notice */}
-          <div className="bg-yellow-500/20 rounded-lg p-3">
-            <p className="text-yellow-200 text-xs text-center">
-              📱 Optimized for mobile browsers via ngrok tunnel
-            </p>
+          <span className="ml-2">Verizon</span>
+        </div>
+        <div className="text-center font-medium">
+          {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </div>
+        <div className="flex items-center space-x-1">
+          <div className="text-xs">100%</div>
+          <div className="w-6 h-3 border border-white rounded-sm">
+            <div className="w-full h-full bg-green-500 rounded-sm"></div>
           </div>
         </div>
       </div>
+
+      {/* Background blur effect */}
+      <div className="absolute inset-0 bg-gradient-to-b from-gray-900 via-gray-800 to-black"></div>
+
+      {/* Contact avatar */}
+      <div className="relative z-10 flex flex-col items-center justify-center flex-1 px-8">
+        <div className="w-48 h-48 rounded-full bg-gradient-to-br from-blue-400 to-purple-600 flex items-center justify-center mb-8 shadow-2xl">
+          <div className="text-6xl font-light text-white">A</div>
+        </div>
+
+        {/* Contact name */}
+        <h1 className="text-4xl font-light text-white mb-2">Alexis</h1>
+        
+        {/* Contact info */}
+        <p className="text-xl text-gray-300 mb-1">Restaurant Assistant</p>
+        
+        {/* Status */}
+        <p className="text-lg text-gray-400 mb-4">{getStatusText()}</p>
+        
+        {/* Call duration */}
+        {status === 'connected' && (
+          <p className="text-lg text-gray-300 mb-8">{getCallDuration()}</p>
+        )}
+
+        {/* Current message */}
+        {currentMessage && status === 'connected' && (
+          <div className="bg-black/30 backdrop-blur-sm rounded-2xl px-6 py-4 mx-4 mb-8 max-w-sm">
+            <p className="text-white text-center text-sm leading-relaxed">
+              "{currentMessage}"
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Call controls */}
+      <div className="relative z-10 pb-12">
+        {status === 'incoming' && (
+          <div className="flex items-center justify-center space-x-20">
+            {/* Decline button */}
+            <button
+              onClick={declineCall}
+              className="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center shadow-lg transform active:scale-95 transition-transform"
+            >
+              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M19.23 15.26l-2.54-.29a1.99 1.99 0 00-1.64.57l-1.84 1.84a15.045 15.045 0 01-6.59-6.59l1.85-1.85c.43-.43.64-1.03.57-1.64l-.29-2.52a2.001 2.001 0 00-1.99-1.78H5.03c-1.13 0-2.07.94-2 2.07.53 8.54 7.36 15.36 15.89 15.89 1.13.07 2.07-.87 2.07-2v-1.73c.01-1.01-.75-1.86-1.76-1.98z"/>
+              </svg>
+            </button>
+
+            {/* Accept button */}
+            <button
+              onClick={acceptCall}
+              className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center shadow-lg transform active:scale-95 transition-transform animate-pulse"
+            >
+              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M19.23 15.26l-2.54-.29a1.99 1.99 0 00-1.64.57l-1.84 1.84a15.045 15.045 0 01-6.59-6.59l1.85-1.85c.43-.43.64-1.03.57-1.64l-.29-2.52a2.001 2.001 0 00-1.99-1.78H5.03c-1.13 0-2.07.94-2 2.07.53 8.54 7.36 15.36 15.89 15.89 1.13.07 2.07-.87 2.07-2v-1.73c.01-1.01-.75-1.86-1.76-1.98z"/>
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {(status === 'connected' || status === 'connecting') && (
+          <div className="flex items-center justify-center">
+            {/* End call button */}
+            <button
+              onClick={endCall}
+              className="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center shadow-lg transform active:scale-95 transition-transform"
+            >
+              <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M19.23 15.26l-2.54-.29a1.99 1.99 0 00-1.64.57l-1.84 1.84a15.045 15.045 0 01-6.59-6.59l1.85-1.85c.43-.43.64-1.03.57-1.64l-.29-2.52a2.001 2.001 0 00-1.99-1.78H5.03c-1.13 0-2.07.94-2 2.07.53 8.54 7.36 15.36 15.89 15.89 1.13.07 2.07-.87 2.07-2v-1.73c.01-1.01-.75-1.86-1.76-1.98z"/>
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {(status === 'ended' || status === 'declined' || status === 'error') && (
+          <div className="flex items-center justify-center">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-8 py-3 bg-blue-500 text-white rounded-full font-medium transform active:scale-95 transition-transform"
+            >
+              Call Again
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Recording indicator */}
+      {isRecording && (
+        <div className="absolute top-16 left-1/2 transform -translate-x-1/2 flex items-center space-x-2 bg-red-500 px-3 py-1 rounded-full">
+          <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+          <span className="text-white text-xs font-medium">LIVE</span>
+        </div>
+      )}
     </div>
   );
 } 
