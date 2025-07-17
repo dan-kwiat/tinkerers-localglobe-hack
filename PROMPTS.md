@@ -70,3 +70,13 @@ update the app/api/encode/route.ts file to use the places api instead of the    
 extract the place -> coordinates lookup functionality to a file in ./lib. Put   │
 │   the key loading from env vars in there too.
 ```
+
+```
+move the getDirections method in app/api/directions/route.ts to the new lib     │
+│   file
+```
+
+```
+ Now in the directions route.ts, geocode the B commute before finding            │
+│   directions. Use the appropriate method in the lib.
+```
