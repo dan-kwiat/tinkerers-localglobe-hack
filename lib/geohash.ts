@@ -1,7 +1,7 @@
 const BASE32_CODES = "0123456789bcdefghjkmnpqrstuvwxyz"
 
-let BASE32_CODES_DICT: { [key: string]: number } = {}
-for (var i = 0; i < BASE32_CODES.length; i++) {
+const BASE32_CODES_DICT: { [key: string]: number } = {}
+for (let i = 0; i < BASE32_CODES.length; i++) {
   BASE32_CODES_DICT[BASE32_CODES.charAt(i)] = i
 }
 
@@ -11,20 +11,20 @@ const MIN_LON = -180
 const MAX_LON = 180
 
 export function boundingBox(hash_string: string) {
-  var isLon = true,
+  let isLon = true,
     maxLat = MAX_LAT,
     minLat = MIN_LAT,
     maxLon = MAX_LON,
     minLon = MIN_LON,
     mid
 
-  var hashValue = 0
-  for (var i = 0, l = hash_string.length; i < l; i++) {
-    var code = hash_string[i].toLowerCase()
+  let hashValue = 0
+  for (let i = 0, l = hash_string.length; i < l; i++) {
+    const code = hash_string[i].toLowerCase()
     hashValue = BASE32_CODES_DICT[code]
 
-    for (var bits = 4; bits >= 0; bits--) {
-      var bit = (hashValue >> bits) & 1
+    for (let bits = 4; bits >= 0; bits--) {
+      const bit = (hashValue >> bits) & 1
       if (isLon) {
         mid = (maxLon + minLon) / 2
         if (bit === 1) {
@@ -51,8 +51,8 @@ export function encode(
   longitude: number,
   numberOfChars: number
 ) {
-  var chars = [],
-    bits = 0,
+  const chars = []
+  let bits = 0,
     bitsTotal = 0,
     hash_value = 0,
     maxLat = MAX_LAT,
@@ -84,7 +84,8 @@ export function encode(
     bits++
     bitsTotal++
     if (bits === 5) {
-      var code = BASE32_CODES[hash_value]
+      const code = BASE32_CODES[hash_value]
+      // @ts-expect-error - code is a string
       chars.push(code)
       bits = 0
       hash_value = 0

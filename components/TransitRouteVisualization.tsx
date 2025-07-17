@@ -114,6 +114,23 @@ export function TransitRouteVisualization({
   const bounds = calculateGeoBounds(routes)
   const defaultColors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#34495e']
   
+  // Calculate aspect ratio from geographic bounds
+  const latRange = bounds.maxLat - bounds.minLat
+  const lngRange = bounds.maxLng - bounds.minLng
+  const geoAspectRatio = lngRange / latRange
+  
+  // Adjust dimensions to maintain proper aspect ratio
+  let adjustedWidth = width
+  let adjustedHeight = height
+  
+  if (geoAspectRatio > width / height) {
+    // Geographic bounds are wider than the container, adjust height
+    adjustedHeight = width / geoAspectRatio
+  } else {
+    // Geographic bounds are taller than the container, adjust width
+    adjustedWidth = height * geoAspectRatio
+  }
+  
   const getStationColor = (stationTypes: string[]) => {
     if (stationTypes.includes('Major Interchange')) return '#ff6b6b'
     if (stationTypes.includes('Tube Station')) return '#4ecdc4'
@@ -123,13 +140,13 @@ export function TransitRouteVisualization({
 
   return (
     <div className="border rounded-lg p-4 bg-white">
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <svg width={adjustedWidth} height={adjustedHeight} viewBox={`0 0 ${adjustedWidth} ${adjustedHeight}`}>
         {/* Route paths */}
         {routes.map((route, routeIndex) => {
           if (!route || !route.steps || route.steps.length === 0) return null
           
           const points = route.steps.map(step => 
-            projectCoordinates(step.location.latitude, step.location.longitude, bounds, width, height)
+            projectCoordinates(step.location.latitude, step.location.longitude, bounds, adjustedWidth, adjustedHeight)
           )
           
           const pathData = points.reduce((path: string, point: { x: number; y: number }, index: number) => {
@@ -155,7 +172,7 @@ export function TransitRouteVisualization({
         {/* Station markers */}
         {routes.map((route, routeIndex) => 
           (route?.steps || []).map((step: TransitStep, stepIndex: number) => {
-            const point = projectCoordinates(step.location.latitude, step.location.longitude, bounds, width, height)
+            const point = projectCoordinates(step.location.latitude, step.location.longitude, bounds, adjustedWidth, adjustedHeight)
             const color = getStationColor(step.stationTypes)
             
             return (

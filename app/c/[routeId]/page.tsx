@@ -14,12 +14,24 @@ import { Label } from "@/components/ui/label"
 import { useParams } from "next/navigation"
 import { TransitRouteVisualization } from "@/components/TransitRouteVisualization"
 
+interface TransitStep {
+  name: string
+  stationTypes: string[]
+  lines: string[]
+  departureTime?: string
+  arrivalTime?: string
+  location: {
+    latitude: number
+    longitude: number
+  }
+}
+
 export default function Page() {
   const [commuteFrom, setCommuteFrom] = useState("")
   const [commuteTo, setCommuteTo] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [directionsA, setDirectionsA] = useState<any>(null)
-  const [directionsB, setDirectionsB] = useState<any>(null)
+  const [directionsA, setDirectionsA] = useState<unknown>(null)
+  const [directionsB, setDirectionsB] = useState<unknown>(null)
   const [error, setError] = useState<string | null>(null)
   const { routeId } = useParams<{ routeId: string }>()
 
@@ -43,7 +55,7 @@ export default function Page() {
         try {
           const text = await response.text()
           throw new Error(text)
-        } catch (err) {
+        } catch {
           throw new Error("Failed to get directions")
         }
       }
@@ -113,8 +125,8 @@ export default function Page() {
           <div className="bg-white rounded-lg shadow-lg p-6">
             <TransitRouteVisualization 
               routes={[
-                { steps: directionsA, label: "Shared Route", color: "#3498db" },
-                { steps: directionsB, label: "Your Route", color: "#e74c3c" }
+                { steps: Array.isArray(directionsA) ? directionsA as TransitStep[] : [], label: "Shared Route", color: "#3498db" },
+                { steps: Array.isArray(directionsB) ? directionsB as TransitStep[] : [], label: "Your Route", color: "#e74c3c" }
               ]} 
             />
           </div>

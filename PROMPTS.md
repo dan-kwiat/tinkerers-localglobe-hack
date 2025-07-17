@@ -80,3 +80,16 @@ move the getDirections method in app/api/directions/route.ts to the new lib     
  Now in the directions route.ts, geocode the B commute before finding            │
 │   directions. Use the appropriate method in the lib.
 ```
+
+```
+Type error: Type '{}' is missing the following properties from type 'TransitStep[]': length, pop, push, concat, and 35 more.
+
+  114 |             <TransitRouteVisualization
+  115 |               routes={[
+> 116 |                 { steps: directionsA, label: "Shared Route", color: "#3498db" },
+      |                   ^
+  117 |                 { steps: directionsB, label: "Your Route", color: "#e74c3c" }
+  118 |               ]}
+  119 |             />
+Next.js build worker exited with code: 1 and signal: null
+```
