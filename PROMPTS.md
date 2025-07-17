@@ -54,3 +54,19 @@ Good but the calculation of the bounding box seems to be off, can you fix       
 │   directions are undefined. If they are defined, show the svg in an appropriate   │
 │   container with a button below titled "Find a cafe"
 ```
+
+````
+update the app/api/encode/route.ts file to use the places api instead of the    │
+│   geocoding api. example call: ```curl -X POST -d '{                              │
+│     "textQuery" : "Spicy Vegetarian Food in Sydney, Australia"                    │
+│   }' \                                                                            │
+│   -H 'Content-Type: application/json' -H 'X-Goog-Api-Key: API_KEY' \              │
+│   -H 'X-Goog-FieldMask:                                                           │
+│   places.displayName,places.formattedAddress,places.priceLevel' \                 │
+│   'https://places.googleapis.com/v1/places:searchText'```
+````
+
+```
+extract the place -> coordinates lookup functionality to a file in ./lib. Put   │
+│   the key loading from env vars in there too.
+```
