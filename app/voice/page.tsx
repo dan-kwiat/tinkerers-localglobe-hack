@@ -2,6 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react';
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 const AGENT_ID = process.env.NEXT_PUBLIC_AGENT_ID || "";
 const ELEVENLABS_API_KEY = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY || "";
 
