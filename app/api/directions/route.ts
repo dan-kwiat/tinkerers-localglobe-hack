@@ -1,4 +1,5 @@
 import { decode } from "@/lib/geohash"
+import { getDirections, geocodeLocation } from "@/lib/places"
 import { parseTransitRoute } from "./parseRoute"
 
 // accepts `commuteFrom` and `commuteTo` and `routeId` as query params
@@ -7,64 +8,6 @@ import { parseTransitRoute } from "./parseRoute"
 // Responds with a JSON object containing both sets of directions
 // google maps api key is in process.env.GOOGLE_MAPS_API_KEY
 
-const apiKey = process.env.GOOGLE_MAPS_API_KEY
-if (!apiKey) {
-  throw new Error("Google Maps API key not configured")
-}
-
-async function getDirections(
-  origin: string | { lat: number; lng: number },
-  destination: string | { lat: number; lng: number }
-) {
-  const formatLocation = (location: string | { lat: number; lng: number }) => {
-    if (typeof location === "string") {
-      return { address: location }
-    } else {
-      return {
-        location: {
-          latLng: { latitude: location.lat, longitude: location.lng },
-        },
-      }
-    }
-  }
-
-  const requestBody = {
-    origin: formatLocation(origin),
-    destination: formatLocation(destination),
-    travelMode: "TRANSIT",
-    computeAlternativeRoutes: true,
-    // transitPreferences: {
-    //   routingPreference: "LESS_WALKING",
-    //   allowedTravelModes: ["TRAIN"],
-    // },
-  }
-
-  const response = await fetch(
-    "https://routes.googleapis.com/directions/v2:computeRoutes",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey!,
-        "X-Goog-FieldMask": "routes.legs.steps.transitDetails",
-      },
-      body: JSON.stringify(requestBody),
-    }
-  )
-
-  if (!response.ok) {
-    try {
-      const data = await response.text()
-      console.error(data)
-    } catch (error) {
-      console.error("Error in getDirections:", error)
-    }
-    throw new Error(`Directions API error: ${response.status}`)
-  }
-
-  const data = await response.json()
-  return data
-}
 
 export async function GET(request: Request) {
   try {
@@ -91,8 +34,13 @@ export async function GET(request: Request) {
       )
     )
 
+    const [fromLocationB, toLocationB] = await Promise.all([
+      geocodeLocation(commuteFromB),
+      geocodeLocation(commuteToB),
+    ])
+
     const directionsB = parseTransitRoute(
-      await getDirections(commuteFromB, commuteToB)
+      await getDirections(fromLocationB, toLocationB)
     )
     // console.log(JSON.stringify(directionsA, null))
     // console.log(JSON.stringify(directionsB, null))
